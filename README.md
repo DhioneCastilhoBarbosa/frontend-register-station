@@ -130,10 +130,10 @@ docker build \
   --build-arg VITE_LICENSE_CODE=P3D-xxxx \
   -t cadastro-carregador-frontend .
 
-docker run --rm -p 8080:80 cadastro-carregador-frontend
+docker run --rm -p 8086:8086 cadastro-carregador-frontend
 ```
 
-A imagem serve o SPA via **Nginx**. A API precisa liberar **CORS** para o domínio do frontend.
+A imagem serve o SPA via **Nginx na porta 8086**. No Traefik/proxy, o target do container deve ser **8086** (não 80). A API precisa liberar **CORS** para o domínio do frontend.
 
 ---
 
