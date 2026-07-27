@@ -33,9 +33,23 @@ textarea {
   font: inherit;
 }
 
-#serial-barcode-scanner video {
+#serial-barcode-scanner video,
+.barcode-scanner-viewport video {
   width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
   border-radius: 0.75rem;
+}
+
+.barcode-scanner-viewport,
+.barcode-scanner-viewport > div {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: inherit;
+}
+
+.barcode-scanner-viewport img {
+  display: none !important;
 }
 
 @keyframes slideIn {
