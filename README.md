@@ -123,17 +123,27 @@ npm run lint      # oxlint
 
 ## Docker
 
-```bash
-docker build \
-  --build-arg VITE_AUTH_EMAIL=seu@email.com \
-  --build-arg VITE_AUTH_PASSWORD=sua-senha \
-  --build-arg VITE_LICENSE_CODE=P3D-xxxx \
-  -t cadastro-carregador-frontend .
+As credenciais **não** vêm do `.env` do Git (ele é ignorado no build). Configure no painel (Coolify/Traefik) como **variáveis de ambiente do container** (runtime):
 
-docker run --rm -p 8086:8086 cadastro-carregador-frontend
+| Variável | Exemplo |
+| --- | --- |
+| `VITE_API_URL` | `https://api-register.api-castilho.com.br` |
+| `VITE_AUTH_EMAIL` | e-mail do painel |
+| `VITE_AUTH_PASSWORD` | senha do painel |
+| `VITE_LICENSE_CODE` | `P3D-xxxx` |
+
+```bash
+docker build -t cadastro-carregador-frontend .
+
+docker run --rm -p 8086:8086 \
+  -e VITE_API_URL=https://api-register.api-castilho.com.br \
+  -e VITE_AUTH_EMAIL=seu@email.com \
+  -e VITE_AUTH_PASSWORD=sua-senha \
+  -e VITE_LICENSE_CODE=P3D-xxxx \
+  cadastro-carregador-frontend
 ```
 
-A imagem serve o SPA via **Nginx na porta 8086**. No Traefik/proxy, o target do container deve ser **8086** (não 80). A API precisa liberar **CORS** para o domínio do frontend.
+A imagem serve o SPA via **Nginx na porta 8086**. No Traefik, o target do container deve ser **8086**. A API precisa liberar **CORS** para `https://cadastro-carregador.api-castilho.com.br`.
 
 ---
 

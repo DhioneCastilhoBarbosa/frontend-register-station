@@ -1,6 +1,5 @@
 import { ApiError, type ApiErrorBody } from '../types'
-
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '/api'
+import { getAppConfig } from '../lib/config'
 
 let accessToken: string | null = null
 
@@ -29,6 +28,7 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, auth = true, headers: customHeaders, ...rest } = options
+  const { apiUrl } = getAppConfig()
 
   const headers = new Headers(customHeaders)
   if (!headers.has('Content-Type') && body !== undefined) {
@@ -44,7 +44,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   let response: Response
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(`${apiUrl}${path}`, {
       ...rest,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -70,4 +70,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return parsed as T
 }
 
-export { API_URL }
+export function getApiUrl() {
+  return getAppConfig().apiUrl
+}
+
+export { getApiUrl as API_URL }

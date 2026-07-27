@@ -37,8 +37,10 @@ const initialForm = {
   additional_info: '',
 }
 
+import { getAppConfig } from '../lib/config'
+
 function getLicenseCode(): string {
-  return (import.meta.env.VITE_LICENSE_CODE as string | undefined)?.trim() || ''
+  return getAppConfig().licenseCode
 }
 
 export function RegistrationPage() {

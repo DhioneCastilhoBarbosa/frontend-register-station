@@ -1,22 +1,22 @@
 import { apiRequest, setAccessToken } from './client'
+import { getAppConfig } from '../lib/config'
 
 interface LoginResponse {
   token: string
 }
 
-/** Login silencioso com credenciais do .env (VITE_AUTH_EMAIL / VITE_AUTH_PASSWORD). */
+/** Login silencioso com credenciais do .env / runtime (Docker). */
 export async function silentLogin(): Promise<string> {
-  const email = import.meta.env.VITE_AUTH_EMAIL as string | undefined
-  const password = import.meta.env.VITE_AUTH_PASSWORD as string | undefined
+  const { authEmail, authPassword } = getAppConfig()
 
-  if (!email || !password) {
-    throw new Error('Configure VITE_AUTH_EMAIL e VITE_AUTH_PASSWORD no arquivo .env')
+  if (!authEmail || !authPassword) {
+    throw new Error('Credenciais não configuradas (VITE_AUTH_EMAIL / VITE_AUTH_PASSWORD)')
   }
 
   const data = await apiRequest<LoginResponse>('/auth/login', {
     method: 'POST',
     auth: false,
-    body: { email, password },
+    body: { email: authEmail, password: authPassword },
   })
 
   setAccessToken(data.token)
