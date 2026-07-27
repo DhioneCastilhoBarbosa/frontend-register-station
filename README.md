@@ -78,7 +78,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Abra [http://localhost:5173](http://localhost:5173).
+Abra [http://localhost:8086](http://localhost:8086).
 
 > Após alterar o `.env`, reinicie o Vite.
 
