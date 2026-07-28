@@ -18,9 +18,10 @@ interface BarcodeScannerProps {
   onScan: (value: string) => void
 }
 
-function hintsFor(kind: CodeKind) {
+function hintsFor(kind: CodeKind, pure = false) {
   const hints = new Map<DecodeHintType, unknown>()
   hints.set(DecodeHintType.TRY_HARDER, true)
+  if (pure) hints.set(DecodeHintType.PURE_BARCODE, true)
   hints.set(
     DecodeHintType.POSSIBLE_FORMATS,
     kind === 'qr'
@@ -40,42 +41,52 @@ function hintsFor(kind: CodeKind) {
   return hints
 }
 
+/** Recorta o centro e amplia — essencial para QR pequeno em etiqueta preta. */
 function drawVideoFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
-  invert: boolean,
-  cropRatio = 0.82,
+  options: {
+    invert?: boolean
+    /** fração da imagem usada (menor = mais zoom digital) */
+    cropRatio?: number
+    /** tamanho mínimo de saída para o decoder */
+    minOut?: number
+    contrast?: number
+  } = {},
 ) {
+  const { invert = false, cropRatio = 0.82, minOut = 720, contrast = 1.25 } = options
   const vw = video.videoWidth
   const vh = video.videoHeight
   if (!vw || !vh) return false
 
-  const cw = Math.floor(vw * cropRatio)
-  const ch = Math.floor(vh * cropRatio)
-  const sx = Math.floor((vw - cw) / 2)
-  const sy = Math.floor((vh - ch) / 2)
+  const side = Math.min(vw, vh)
+  const crop = Math.max(48, Math.floor(side * cropRatio))
+  const sx = Math.floor((vw - crop) / 2)
+  const sy = Math.floor((vh - crop) / 2)
 
-  const outW = Math.min(960, cw)
-  const outH = Math.floor(outW * (ch / cw))
-  canvas.width = outW
-  canvas.height = outH
+  const out = Math.min(1200, Math.max(minOut, Math.floor(crop * Math.max(1.5, 1 / cropRatio))))
+  canvas.width = out
+  canvas.height = out
 
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) return false
 
-  ctx.drawImage(video, sx, sy, cw, ch, 0, 0, outW, outH)
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(video, sx, sy, crop, crop, 0, 0, out, out)
 
-  if (invert) {
-    const img = ctx.getImageData(0, 0, outW, outH)
-    const d = img.data
-    for (let i = 0; i < d.length; i += 4) {
-      d[i] = 255 - d[i]
-      d[i + 1] = 255 - d[i + 1]
-      d[i + 2] = 255 - d[i + 2]
-    }
-    ctx.putImageData(img, 0, 0)
+  const img = ctx.getImageData(0, 0, out, out)
+  const d = img.data
+  const intercept = 128 * (1 - contrast)
+  for (let i = 0; i < d.length; i += 4) {
+    let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+    g = g * contrast + intercept
+    if (invert) g = 255 - g
+    d[i] = g
+    d[i + 1] = g
+    d[i + 2] = g
   }
-
+  ctx.putImageData(img, 0, 0)
   return true
 }
 
@@ -97,6 +108,22 @@ function decodeCanvas(reader: MultiFormatReader, canvas: HTMLCanvasElement): str
     }
   }
 }
+
+/** Estratégias leves, 1 por tick (não trava o iPhone). */
+const QR_STRATEGIES = [
+  { cropRatio: 0.42, invert: false, contrast: 1.35, pure: true, minOut: 900 },
+  { cropRatio: 0.32, invert: false, contrast: 1.4, pure: true, minOut: 1000 },
+  { cropRatio: 0.28, invert: false, contrast: 1.45, pure: true, minOut: 1100 },
+  { cropRatio: 0.38, invert: true, contrast: 1.3, pure: true, minOut: 900 },
+  { cropRatio: 0.5, invert: false, contrast: 1.25, pure: false, minOut: 800 },
+  { cropRatio: 0.35, invert: true, contrast: 1.4, pure: false, minOut: 1000 },
+]
+
+const BARCODE_STRATEGIES = [
+  { cropRatio: 0.88, invert: true, contrast: 1.2, pure: false, minOut: 800 },
+  { cropRatio: 0.88, invert: false, contrast: 1.2, pure: false, minOut: 800 },
+  { cropRatio: 0.75, invert: true, contrast: 1.3, pure: false, minOut: 900 },
+]
 
 export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -133,8 +160,7 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
 
     let cancelled = false
     const reader = new MultiFormatReader()
-    reader.setHints(hintsFor(kind))
-    let invertToggle = false
+    let strategyIndex = 0
 
     const finish = (raw: string) => {
       if (handledRef.current || cancelled) return
@@ -152,7 +178,7 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
       if (videoRef.current) videoRef.current.srcObject = null
     }
 
-    const schedule = (ms = 280) => {
+    const schedule = (ms = 260) => {
       if (cancelled || handledRef.current) return
       tickRef.current = window.setTimeout(() => {
         void scanOnce()
@@ -168,17 +194,25 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
       const video = videoRef.current
       const canvas = canvasRef.current
       if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-        schedule(200)
+        schedule(180)
         return
       }
 
+      const strategies = kind === 'qr' ? QR_STRATEGIES : BARCODE_STRATEGIES
+      const strategy = strategies[strategyIndex % strategies.length]
+      strategyIndex += 1
+
       busyRef.current = true
       try {
-        // Barras: alterna invertido (etiqueta branca no preto). QR: sem invert padrão.
-        const invert = kind === 'barcode' ? invertToggle : false
-        invertToggle = !invertToggle
-
-        if (drawVideoFrame(video, canvas, invert, kind === 'qr' ? 0.7 : 0.88)) {
+        reader.setHints(hintsFor(kind, strategy.pure))
+        if (
+          drawVideoFrame(video, canvas, {
+            invert: strategy.invert,
+            cropRatio: strategy.cropRatio,
+            minOut: strategy.minOut,
+            contrast: strategy.contrast,
+          })
+        ) {
           const text = decodeCanvas(reader, canvas)
           if (text) {
             finish(text)
@@ -189,7 +223,7 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
         busyRef.current = false
       }
 
-      schedule(kind === 'barcode' ? 220 : 300)
+      schedule(kind === 'qr' ? 200 : 240)
     }
 
     const start = async () => {
@@ -203,8 +237,8 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
           audio: false,
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
         })
 
@@ -304,7 +338,11 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
           ) : (
             <>
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm text-slate-600">Aponte a câmera para o código.</p>
+                <p className="text-sm text-slate-600">
+                  {kind === 'qr'
+                    ? 'Centralize o QR na moldura e aproxime um pouco.'
+                    : 'Aponte a câmera para o código.'}
+                </p>
                 <button
                   type="button"
                   className="shrink-0 text-xs font-medium text-emerald-700 underline"
@@ -331,7 +369,7 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
                     <div
                       className={`rounded-xl border-2 border-emerald-400/90 shadow-[0_0_0_9999px_rgba(2,6,23,0.35)] ${
-                        kind === 'qr' ? 'h-[46%] w-[46%]' : 'h-[30%] w-[88%]'
+                        kind === 'qr' ? 'h-[38%] w-[38%]' : 'h-[30%] w-[88%]'
                       }`}
                     />
                   </div>
