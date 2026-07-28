@@ -460,7 +460,15 @@ export function RegistrationPage() {
 
       <Section
         title="Visibilidade"
-        description="Pública ou privada (com usuários autorizados que estão cadastrados no aplicativo Intelbras CVE)."
+        description={
+          <>
+            Pública ou privada{' '}
+            <span className="font-semibold text-slate-800">
+              (com usuários autorizados que estão cadastrados no aplicativo Intelbras CVE)
+            </span>
+            .
+          </>
+        }
       >
         <div className="grid gap-3 sm:grid-cols-2">
           {(['public', 'private'] as Visibility[]).map((value) => (

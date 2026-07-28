@@ -96,7 +96,7 @@ export function Section({
   action,
 }: {
   title: string
-  description?: string
+  description?: ReactNode
   children: ReactNode
   action?: ReactNode
 }) {
