@@ -462,11 +462,10 @@ export function RegistrationPage() {
         title="Visibilidade"
         description={
           <>
-            Pública ou privada{' '}
+            Pública ou privada.{' '}
             <span className="font-semibold text-slate-800">
-              (com usuários autorizados que estão cadastrados no aplicativo Intelbras CVE)
+              Os usuários devem estar cadastrados no aplicativo Intelbras CVE.
             </span>
-            .
           </>
         }
       >
