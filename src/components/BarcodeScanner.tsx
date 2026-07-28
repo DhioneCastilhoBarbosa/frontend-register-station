@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { BarcodeFormat, BrowserMultiFormatReader } from '@zxing/browser'
-import { DecodeHintType, NotFoundException } from '@zxing/library'
+import { DecodeHintType } from '@zxing/library'
 import { Camera, ImagePlus, X } from 'lucide-react'
 import { Button } from './ui'
 
@@ -29,161 +29,73 @@ function buildHints() {
   return hints
 }
 
+/**
+ * No iPhone (Safari/Chrome) a leitura ao vivo trava e códigos pequenos falham.
+ * Fluxo principal: foto com a câmera nativa (melhor foco) + decode da imagem.
+ */
 export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const controlsRef = useRef<{ stop: () => void } | null>(null)
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null)
-  const onScanRef = useRef(onScan)
-  const onCloseRef = useRef(onClose)
-  const handledRef = useRef(false)
-
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
-  const [starting, setStarting] = useState(false)
-  const [decodingPhoto, setDecodingPhoto] = useState(false)
-
-  onScanRef.current = onScan
-  onCloseRef.current = onClose
-
-  const finish = (value: string) => {
-    if (handledRef.current) return
-    const text = value.trim()
-    if (!text) return
-    handledRef.current = true
-    try {
-      controlsRef.current?.stop()
-    } catch {
-      /* ignore */
-    }
-    controlsRef.current = null
-    onScanRef.current(text)
-    onCloseRef.current()
-  }
-
-  useEffect(() => {
-    if (!open) return
-
-    handledRef.current = false
-    setError(null)
-    setStarting(true)
-    setDecodingPhoto(false)
-
-    let cancelled = false
-    const reader = new BrowserMultiFormatReader(buildHints(), {
-      delayBetweenScanAttempts: 250,
-      delayBetweenScanSuccess: 1000,
-      tryPlayVideoTimeout: 8000,
-    })
-    readerRef.current = reader
-
-    const start = async () => {
-      try {
-        // Espera o <video> montar
-        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-        if (cancelled || !videoRef.current) return
-
-        const controls = await reader.decodeFromConstraints(
-          {
-            audio: false,
-            video: {
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          },
-          videoRef.current,
-          (result, err) => {
-            if (cancelled || handledRef.current) return
-            if (result) {
-              finish(result.getText())
-              return
-            }
-            // NotFoundException é normal a cada frame sem código
-            if (err && !(err instanceof NotFoundException)) {
-              /* ignora ruído de decode */
-            }
-          },
-        )
-
-        if (cancelled) {
-          controls.stop()
-          return
-        }
-        controlsRef.current = controls
-      } catch (err) {
-        if (cancelled) return
-        const message = err instanceof Error ? err.message : ''
-        if (/NotAllowedError|Permission/i.test(message)) {
-          setError('Permissão da câmera negada. Libere em Ajustes do iPhone.')
-        } else if (/NotFoundError|DevicesNotFound/i.test(message)) {
-          setError('Nenhuma câmera encontrada.')
-        } else {
-          setError('Não foi possível abrir a câmera contínua. Use “Fotografar código” abaixo.')
-        }
-      } finally {
-        if (!cancelled) setStarting(false)
-      }
-    }
-
-    void start()
-
-    return () => {
-      cancelled = true
-      try {
-        controlsRef.current?.stop()
-      } catch {
-        /* ignore */
-      }
-      controlsRef.current = null
-      readerRef.current = null
-    }
-  }, [open])
-
-  const onPhotoSelected = async (file: File | null) => {
-    if (!file) return
-    setDecodingPhoto(true)
-    setError(null)
-
-    try {
-      const reader = readerRef.current ?? new BrowserMultiFormatReader(buildHints())
-      const url = URL.createObjectURL(file)
-      try {
-        const result = await reader.decodeFromImageUrl(url)
-        finish(result.getText())
-      } finally {
-        URL.revokeObjectURL(url)
-      }
-    } catch {
-      // Tenta com imagem HTML + TRY_HARDER já nas hints
-      try {
-        const reader = new BrowserMultiFormatReader(buildHints())
-        const img = new Image()
-        const url = URL.createObjectURL(file)
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve()
-          img.onerror = () => reject(new Error('image'))
-          img.src = url
-        })
-        const result = await reader.decodeFromImageElement(img)
-        URL.revokeObjectURL(url)
-        finish(result.getText())
-      } catch {
-        setError(
-          'Não deu para ler nesta foto. Aproxime um pouco, mantenha firme/foco e tire outra — ou digite o serial.',
-        )
-      }
-    } finally {
-      setDecodingPhoto(false)
-      if (fileRef.current) fileRef.current.value = ''
-    }
-  }
+  const [decoding, setDecoding] = useState(false)
 
   if (!open) return null
 
+  const finish = (value: string) => {
+    const text = value.trim()
+    if (!text) return
+    onScan(text)
+    onClose()
+  }
+
+  const decodeFile = async (file: File | null) => {
+    if (!file) return
+    setDecoding(true)
+    setError(null)
+
+    const url = URL.createObjectURL(file)
+    try {
+      const reader = new BrowserMultiFormatReader(buildHints())
+      try {
+        const result = await reader.decodeFromImageUrl(url)
+        finish(result.getText())
+        return
+      } catch {
+        /* tenta via elemento */
+      }
+
+      const img = new Image()
+      img.decoding = 'async'
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('image'))
+        img.src = url
+      })
+
+      const result = await reader.decodeFromImageElement(img)
+      finish(result.getText())
+    } catch {
+      setError(
+        'Não foi possível ler o código nesta imagem. Tire outra foto mais perto (com foco) ou digite o serial.',
+      )
+    } finally {
+      URL.revokeObjectURL(url)
+      setDecoding(false)
+      if (cameraInputRef.current) cameraInputRef.current.value = ''
+      if (galleryInputRef.current) galleryInputRef.current.value = ''
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-slate-950/85 p-0 sm:items-center sm:p-3">
-      <div className="flex h-full w-full max-w-lg flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[94vh] sm:rounded-2xl">
-        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 sm:items-center sm:p-4">
+      <div
+        className="flex w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+        style={{
+          // Espaço extra para a barra inferior do Chrome no iPhone
+          paddingBottom: 'max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 4.5rem))',
+        }}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2 text-slate-900">
             <Camera className="h-5 w-5 text-emerald-600" />
             <h3 className="font-semibold">Ler código / QR</h3>
@@ -193,63 +105,71 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
             onClick={onClose}
             className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
             aria-label="Fechar"
+            disabled={decoding}
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4">
-          <p className="shrink-0 text-sm text-slate-500">
-            Safari e Chrome no iPhone. Apontar a câmera para o código. Se for <strong>muito pequeno</strong>, use{' '}
-            <strong>Fotografar código</strong> — a câmera do iPhone foca melhor na foto.
+        <div className="space-y-4 px-4 pt-4">
+          <p className="text-sm text-slate-600">
+            No iPhone, a melhor forma é <strong>fotografar</strong> o código com a câmera do sistema (foca
+            melhor em QR/barras pequenos). Funciona no Safari e no Chrome.
           </p>
 
-          <div className="relative min-h-[55vh] flex-1 overflow-hidden rounded-xl bg-slate-950 sm:min-h-[400px]">
-            <video
-              ref={videoRef}
-              className="absolute inset-0 h-full w-full object-cover"
-              muted
-              playsInline
-              autoPlay
-            />
-
-            {!starting && !error && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-5">
-                <div className="h-[40%] w-[88%] rounded-xl border-2 border-emerald-400/90 shadow-[0_0_0_9999px_rgba(2,6,23,0.35)]" />
-              </div>
-            )}
-
-            {(starting || decodingPhoto) && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-950/75 text-sm text-white">
-                {decodingPhoto ? 'Lendo foto…' : 'Abrindo câmera…'}
-              </div>
-            )}
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
+            <Camera className="mx-auto mb-3 h-10 w-10 text-emerald-600" />
+            <p className="text-sm font-medium text-slate-800">Sem preview ao vivo</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Assim o app não trava. A câmera nativa cuida do foco.
+            </p>
           </div>
 
-          {error && <p className="shrink-0 text-sm text-rose-600">{error}</p>}
+          {error && <p className="text-sm text-rose-600">{error}</p>}
+          {decoding && <p className="text-sm text-slate-500">Lendo código na imagem…</p>}
 
           <input
-            ref={fileRef}
+            ref={cameraInputRef}
             type="file"
             accept="image/*"
             capture="environment"
             className="hidden"
-            onChange={(e) => void onPhotoSelected(e.target.files?.[0] ?? null)}
+            onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
+          />
+          <input
+            ref={galleryInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
           />
 
-          <Button
-            type="button"
-            className="w-full shrink-0"
-            disabled={decodingPhoto}
-            onClick={() => fileRef.current?.click()}
-          >
-            <ImagePlus className="h-4 w-4" />
-            Fotografar código (recomendado no iPhone)
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Button
+              type="button"
+              className="w-full py-3.5"
+              disabled={decoding}
+              onClick={() => cameraInputRef.current?.click()}
+            >
+              <Camera className="h-4 w-4" />
+              Abrir câmera e fotografar
+            </Button>
 
-          <Button type="button" variant="secondary" className="w-full shrink-0" onClick={onClose}>
-            Cancelar / digitar manualmente
-          </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full py-3.5"
+              disabled={decoding}
+              onClick={() => galleryInputRef.current?.click()}
+            >
+              <ImagePlus className="h-4 w-4" />
+              Escolher da galeria
+            </Button>
+
+            <Button type="button" variant="ghost" className="w-full" disabled={decoding} onClick={onClose}>
+              Cancelar / digitar manualmente
+            </Button>
+          </div>
         </div>
       </div>
     </div>
