@@ -1,7 +1,6 @@
-import { useRef, useState } from 'react'
-import { BarcodeFormat, BrowserMultiFormatReader } from '@zxing/browser'
-import { DecodeHintType } from '@zxing/library'
-import { Camera, ImagePlus, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Camera, ImagePlus, QrCode, ScanBarcode, X } from 'lucide-react'
+import { decodeLabelImage, type CodeKind } from '../lib/decodeLabelCode'
 import { Button } from './ui'
 
 interface BarcodeScannerProps {
@@ -10,34 +9,25 @@ interface BarcodeScannerProps {
   onScan: (value: string) => void
 }
 
-function buildHints() {
-  const hints = new Map<DecodeHintType, unknown>()
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-    BarcodeFormat.QR_CODE,
-    BarcodeFormat.DATA_MATRIX,
-    BarcodeFormat.CODE_128,
-    BarcodeFormat.CODE_39,
-    BarcodeFormat.CODE_93,
-    BarcodeFormat.EAN_13,
-    BarcodeFormat.EAN_8,
-    BarcodeFormat.UPC_A,
-    BarcodeFormat.UPC_E,
-    BarcodeFormat.ITF,
-    BarcodeFormat.CODABAR,
-  ])
-  hints.set(DecodeHintType.TRY_HARDER, true)
-  return hints
-}
-
 /**
- * No iPhone (Safari/Chrome) a leitura ao vivo trava e códigos pequenos falham.
- * Fluxo principal: foto com a câmera nativa (melhor foco) + decode da imagem.
+ * 1) Escolhe QR ou código de barras
+ * 2) Fotografa com câmera nativa (melhor no iPhone)
+ * 3) Decode multi-pass (recorte + invertido para etiqueta branca no preto)
  */
 export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
+  const [kind, setKind] = useState<CodeKind | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [decoding, setDecoding] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setKind(null)
+      setError(null)
+      setDecoding(false)
+    }
+  }, [open])
 
   if (!open) return null
 
@@ -49,37 +39,19 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
   }
 
   const decodeFile = async (file: File | null) => {
-    if (!file) return
+    if (!file || !kind) return
     setDecoding(true)
     setError(null)
-
-    const url = URL.createObjectURL(file)
     try {
-      const reader = new BrowserMultiFormatReader(buildHints())
-      try {
-        const result = await reader.decodeFromImageUrl(url)
-        finish(result.getText())
-        return
-      } catch {
-        /* tenta via elemento */
-      }
-
-      const img = new Image()
-      img.decoding = 'async'
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = () => reject(new Error('image'))
-        img.src = url
-      })
-
-      const result = await reader.decodeFromImageElement(img)
-      finish(result.getText())
+      const value = await decodeLabelImage(file, kind)
+      finish(value)
     } catch {
       setError(
-        'Não foi possível ler o código nesta imagem. Tire outra foto mais perto (com foco) ou digite o serial.',
+        kind === 'qr'
+          ? 'Não li o QR. Enquadre só o QR (bem de perto), com boa luz, e tire outra foto.'
+          : 'Não li o código de barras. Enquadre só as barras (elas são brancas no fundo preto) e tire outra foto.',
       )
     } finally {
-      URL.revokeObjectURL(url)
       setDecoding(false)
       if (cameraInputRef.current) cameraInputRef.current.value = ''
       if (galleryInputRef.current) galleryInputRef.current.value = ''
@@ -91,14 +63,15 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
       <div
         className="flex w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
         style={{
-          // Espaço extra para a barra inferior do Chrome no iPhone
           paddingBottom: 'max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 4.5rem))',
         }}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2 text-slate-900">
             <Camera className="h-5 w-5 text-emerald-600" />
-            <h3 className="font-semibold">Ler código / QR</h3>
+            <h3 className="font-semibold">
+              {!kind ? 'Tipo de código' : kind === 'qr' ? 'Ler QR Code' : 'Ler código de barras'}
+            </h3>
           </div>
           <button
             type="button"
@@ -112,64 +85,101 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
         </div>
 
         <div className="space-y-4 px-4 pt-4">
-          <p className="text-sm text-slate-600">
-            No iPhone, a melhor forma é <strong>fotografar</strong> o código com a câmera do sistema (foca
-            melhor em QR/barras pequenos). Funciona no Safari e no Chrome.
-          </p>
+          {!kind ? (
+            <>
+              <p className="text-sm text-slate-600">
+                Escolha o tipo na etiqueta do carregador. Isso melhora a leitura (QR pequeno ou barras
+                brancas no fundo preto).
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setKind('qr')}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  <QrCode className="mb-2 h-7 w-7 text-emerald-600" />
+                  <p className="font-semibold text-slate-900">QR Code</p>
+                  <p className="mt-1 text-xs text-slate-500">Quadrado pequeno (ex.: City Pro)</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKind('barcode')}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  <ScanBarcode className="mb-2 h-7 w-7 text-emerald-600" />
+                  <p className="font-semibold text-slate-900">Código de barras</p>
+                  <p className="mt-1 text-xs text-slate-500">Linhas brancas no fundo preto</p>
+                </button>
+              </div>
+              <Button type="button" variant="ghost" className="w-full" onClick={onClose}>
+                Cancelar / digitar manualmente
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-slate-600">
+                {kind === 'qr'
+                  ? 'Aproxime só do QR (quadrado). Evite reflexo e tire a foto com foco.'
+                  : 'Enquadre só as barras da parte de baixo da etiqueta. O fundo é preto e as barras são brancas.'}
+              </p>
 
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-            <Camera className="mx-auto mb-3 h-10 w-10 text-emerald-600" />
-            <p className="text-sm font-medium text-slate-800">Sem preview ao vivo</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Assim o app não trava. A câmera nativa cuida do foco.
-            </p>
-          </div>
+              <button
+                type="button"
+                className="text-xs font-medium text-emerald-700 underline"
+                onClick={() => {
+                  setKind(null)
+                  setError(null)
+                }}
+                disabled={decoding}
+              >
+                ← Trocar tipo de código
+              </button>
 
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-          {decoding && <p className="text-sm text-slate-500">Lendo código na imagem…</p>}
+              {error && <p className="text-sm text-rose-600">{error}</p>}
+              {decoding && <p className="text-sm text-slate-500">Analisando imagem…</p>}
 
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
-          />
-          <input
-            ref={galleryInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
-          />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
+              />
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
+              />
 
-          <div className="flex flex-col gap-2">
-            <Button
-              type="button"
-              className="w-full py-3.5"
-              disabled={decoding}
-              onClick={() => cameraInputRef.current?.click()}
-            >
-              <Camera className="h-4 w-4" />
-              Abrir câmera e fotografar
-            </Button>
-
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full py-3.5"
-              disabled={decoding}
-              onClick={() => galleryInputRef.current?.click()}
-            >
-              <ImagePlus className="h-4 w-4" />
-              Escolher da galeria
-            </Button>
-
-            <Button type="button" variant="ghost" className="w-full" disabled={decoding} onClick={onClose}>
-              Cancelar / digitar manualmente
-            </Button>
-          </div>
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  className="w-full py-3.5"
+                  disabled={decoding}
+                  onClick={() => cameraInputRef.current?.click()}
+                >
+                  <Camera className="h-4 w-4" />
+                  Fotografar
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full py-3.5"
+                  disabled={decoding}
+                  onClick={() => galleryInputRef.current?.click()}
+                >
+                  <ImagePlus className="h-4 w-4" />
+                  Galeria
+                </Button>
+                <Button type="button" variant="ghost" className="w-full" disabled={decoding} onClick={onClose}>
+                  Cancelar / digitar manualmente
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
