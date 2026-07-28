@@ -43,7 +43,7 @@ export function AppLayout() {
           </span>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-900">Cadastro de Carregador</p>
-            <p className="truncate text-xs text-slate-500">Painel CVE Registration</p>
+            <p className="truncate text-xs text-slate-500">Aplicativo Intelbras CVE</p>
           </div>
         </div>
       </header>

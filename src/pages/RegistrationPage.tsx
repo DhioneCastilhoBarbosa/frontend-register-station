@@ -377,7 +377,7 @@ export function RegistrationPage() {
               <Input
                 value={form.serial_number}
                 onChange={(e) => set('serial_number', e.target.value)}
-                placeholder="SN-UNICO-001"
+                placeholder="SN-XXXXX-001"
                 className="font-mono"
               />
               <Button type="button" variant="secondary" className="shrink-0 px-3" onClick={() => setScannerOpen(true)}>
@@ -517,8 +517,7 @@ export function RegistrationPage() {
               if (v && rfidCodes.length === 0) setRfidCodes([''])
               if (!v) setRfidCodes([])
             }}
-            label="Solicitar tags RFID"
-            description="Envia códigos no mesmo cadastro."
+            label="Cadastrar Tags RFID"
           />
           {form.wants_rfid_tag && (
             <>
