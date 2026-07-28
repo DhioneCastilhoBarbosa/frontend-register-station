@@ -73,7 +73,9 @@ function formatMissingFields(keys: string[]): string {
 
 export function RegistrationPage() {
   const toast = useToast()
-  const [form, setForm] = useState(initialForm)
+  const formTopRef = useRef<HTMLFormElement>(null)
+  const [formKey, setFormKey] = useState(0)
+  const [form, setForm] = useState(() => ({ ...initialForm }))
   const [rfidCodes, setRfidCodes] = useState<string[]>([])
   const [owner, setOwner] = useState<UserPrivateStation | null>(null)
   const [allowedUsers, setAllowedUsers] = useState<UserPrivateStation[]>([])
@@ -261,11 +263,18 @@ export function RegistrationPage() {
       const payload = buildPayload()
       const result = await createRegistration(payload)
       toast.success(result.message || 'Cadastrado com sucesso')
-      setForm(initialForm)
+      lastResolvedCep.current = ''
+      resolvingCep.current = false
+      setForm({ ...initialForm })
       setRfidCodes([])
       setOwner(null)
       setAllowedUsers([])
       setFieldErrors({})
+      setFormKey((k) => k + 1)
+      window.setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        formTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 50)
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         try {
@@ -283,7 +292,13 @@ export function RegistrationPage() {
   }
 
   return (
-    <form onSubmit={(e) => void onSubmit(e)} className="space-y-4 sm:space-y-5">
+    <form
+      key={formKey}
+      ref={formTopRef}
+      onSubmit={(e) => void onSubmit(e)}
+      className="space-y-4 sm:space-y-5"
+      autoComplete="on"
+    >
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Nova estação</h1>
         <p className="mt-1 text-sm text-slate-500 sm:text-base">

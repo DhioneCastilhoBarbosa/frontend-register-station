@@ -67,6 +67,7 @@ textarea {
 .leaflet-container {
   width: 100%;
   z-index: 0;
+  isolation: isolate;
   background: #cbd5e1;
 }
 
