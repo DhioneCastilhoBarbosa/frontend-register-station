@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, ImagePlus, QrCode, ScanBarcode, X } from 'lucide-react'
-import { decodeLabelImage, type CodeKind } from '../lib/decodeLabelCode'
+import {
+  BinaryBitmap,
+  DecodeHintType,
+  HTMLCanvasElementLuminanceSource,
+  HybridBinarizer,
+  MultiFormatReader,
+  NotFoundException,
+} from '@zxing/library'
+import { BarcodeFormat } from '@zxing/browser'
+import { Camera, QrCode, ScanBarcode, X } from 'lucide-react'
+import { normalizeScannedValue, type CodeKind } from '../lib/decodeLabelCode'
 import { Button } from './ui'
 
 interface BarcodeScannerProps {
@@ -9,61 +18,243 @@ interface BarcodeScannerProps {
   onScan: (value: string) => void
 }
 
-/**
- * 1) Escolhe QR ou código de barras
- * 2) Fotografa com câmera nativa (melhor no iPhone)
- * 3) Decode multi-pass (recorte + invertido para etiqueta branca no preto)
- */
+function hintsFor(kind: CodeKind) {
+  const hints = new Map<DecodeHintType, unknown>()
+  hints.set(DecodeHintType.TRY_HARDER, true)
+  hints.set(
+    DecodeHintType.POSSIBLE_FORMATS,
+    kind === 'qr'
+      ? [BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX]
+      : [
+          BarcodeFormat.CODE_128,
+          BarcodeFormat.CODE_39,
+          BarcodeFormat.CODE_93,
+          BarcodeFormat.ITF,
+          BarcodeFormat.CODABAR,
+          BarcodeFormat.EAN_13,
+          BarcodeFormat.EAN_8,
+          BarcodeFormat.UPC_A,
+          BarcodeFormat.UPC_E,
+        ],
+  )
+  return hints
+}
+
+function drawVideoFrame(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  invert: boolean,
+  cropRatio = 0.82,
+) {
+  const vw = video.videoWidth
+  const vh = video.videoHeight
+  if (!vw || !vh) return false
+
+  const cw = Math.floor(vw * cropRatio)
+  const ch = Math.floor(vh * cropRatio)
+  const sx = Math.floor((vw - cw) / 2)
+  const sy = Math.floor((vh - ch) / 2)
+
+  const outW = Math.min(960, cw)
+  const outH = Math.floor(outW * (ch / cw))
+  canvas.width = outW
+  canvas.height = outH
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return false
+
+  ctx.drawImage(video, sx, sy, cw, ch, 0, 0, outW, outH)
+
+  if (invert) {
+    const img = ctx.getImageData(0, 0, outW, outH)
+    const d = img.data
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = 255 - d[i]
+      d[i + 1] = 255 - d[i + 1]
+      d[i + 2] = 255 - d[i + 2]
+    }
+    ctx.putImageData(img, 0, 0)
+  }
+
+  return true
+}
+
+function decodeCanvas(reader: MultiFormatReader, canvas: HTMLCanvasElement): string | null {
+  try {
+    reader.reset()
+    const source = new HTMLCanvasElementLuminanceSource(canvas)
+    const bitmap = new BinaryBitmap(new HybridBinarizer(source))
+    return reader.decodeWithState(bitmap).getText()
+  } catch (err) {
+    if (!(err instanceof NotFoundException)) return null
+    try {
+      reader.reset()
+      const source = new HTMLCanvasElementLuminanceSource(canvas, true)
+      const bitmap = new BinaryBitmap(new HybridBinarizer(source))
+      return reader.decodeWithState(bitmap).getText()
+    } catch {
+      return null
+    }
+  }
+}
+
 export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const galleryInputRef = useRef<HTMLInputElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const onScanRef = useRef(onScan)
+  const onCloseRef = useRef(onClose)
+  const handledRef = useRef(false)
+  const busyRef = useRef(false)
+  const tickRef = useRef(0)
+
   const [kind, setKind] = useState<CodeKind | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [decoding, setDecoding] = useState(false)
+  const [starting, setStarting] = useState(false)
+
+  onScanRef.current = onScan
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) {
       setKind(null)
       setError(null)
-      setDecoding(false)
+      setStarting(false)
     }
   }, [open])
 
-  if (!open) return null
+  useEffect(() => {
+    if (!open || !kind) return
 
-  const finish = (value: string) => {
-    const text = value.trim()
-    if (!text) return
-    onScan(text)
-    onClose()
-  }
-
-  const decodeFile = async (file: File | null) => {
-    if (!file || !kind) return
-    setDecoding(true)
+    handledRef.current = false
+    busyRef.current = false
     setError(null)
-    try {
-      const value = await decodeLabelImage(file, kind)
-      finish(value)
-    } catch {
-      setError(
-        kind === 'qr'
-          ? 'Não li o QR. Enquadre só o QR (bem de perto), com boa luz, e tire outra foto.'
-          : 'Não li o código de barras. Enquadre só as barras (elas são brancas no fundo preto) e tire outra foto.',
-      )
-    } finally {
-      setDecoding(false)
-      if (cameraInputRef.current) cameraInputRef.current.value = ''
-      if (galleryInputRef.current) galleryInputRef.current.value = ''
+    setStarting(true)
+
+    let cancelled = false
+    const reader = new MultiFormatReader()
+    reader.setHints(hintsFor(kind))
+    let invertToggle = false
+
+    const finish = (raw: string) => {
+      if (handledRef.current || cancelled) return
+      const text = normalizeScannedValue(raw)
+      if (!text) return
+      handledRef.current = true
+      window.clearTimeout(tickRef.current)
+      onScanRef.current(text)
+      onCloseRef.current()
     }
-  }
+
+    const stopStream = () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+      if (videoRef.current) videoRef.current.srcObject = null
+    }
+
+    const schedule = (ms = 280) => {
+      if (cancelled || handledRef.current) return
+      tickRef.current = window.setTimeout(() => {
+        void scanOnce()
+      }, ms)
+    }
+
+    const scanOnce = () => {
+      if (cancelled || handledRef.current || busyRef.current) {
+        schedule()
+        return
+      }
+
+      const video = videoRef.current
+      const canvas = canvasRef.current
+      if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        schedule(200)
+        return
+      }
+
+      busyRef.current = true
+      try {
+        // Barras: alterna invertido (etiqueta branca no preto). QR: sem invert padrão.
+        const invert = kind === 'barcode' ? invertToggle : false
+        invertToggle = !invertToggle
+
+        if (drawVideoFrame(video, canvas, invert, kind === 'qr' ? 0.7 : 0.88)) {
+          const text = decodeCanvas(reader, canvas)
+          if (text) {
+            finish(text)
+            return
+          }
+        }
+      } finally {
+        busyRef.current = false
+      }
+
+      schedule(kind === 'barcode' ? 220 : 300)
+    }
+
+    const start = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setError('Câmera indisponível neste navegador.')
+          return
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        })
+
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+
+        streamRef.current = stream
+        const video = videoRef.current
+        if (!video) return
+
+        video.setAttribute('playsinline', 'true')
+        video.setAttribute('webkit-playsinline', 'true')
+        video.muted = true
+        video.playsInline = true
+        video.srcObject = stream
+        await video.play()
+
+        if (!cancelled) schedule(350)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : ''
+        if (/NotAllowedError|Permission/i.test(message)) {
+          setError('Permissão da câmera negada.')
+        } else {
+          setError('Não foi possível abrir a câmera.')
+        }
+      } finally {
+        if (!cancelled) setStarting(false)
+      }
+    }
+
+    void start()
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(tickRef.current)
+      stopStream()
+    }
+  }, [open, kind])
+
+  if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 sm:items-center sm:p-4">
       <div
-        className="flex w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+        className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
         style={{
-          paddingBottom: 'max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 4.5rem))',
+          paddingBottom: 'max(1rem, calc(env(safe-area-inset-bottom, 0px) + 4.5rem))',
         }}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -78,19 +269,15 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
             onClick={onClose}
             className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
             aria-label="Fechar"
-            disabled={decoding}
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="space-y-4 px-4 pt-4">
+        <div className="space-y-3 px-4 pt-4">
           {!kind ? (
             <>
-              <p className="text-sm text-slate-600">
-                Escolha o tipo na etiqueta do carregador. Isso melhora a leitura (QR pequeno ou barras
-                brancas no fundo preto).
-              </p>
+              <p className="text-sm text-slate-600">Escolha o tipo de código da etiqueta.</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
@@ -99,7 +286,6 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
                 >
                   <QrCode className="mb-2 h-7 w-7 text-emerald-600" />
                   <p className="font-semibold text-slate-900">QR Code</p>
-                  <p className="mt-1 text-xs text-slate-500">Quadrado pequeno (ex.: City Pro)</p>
                 </button>
                 <button
                   type="button"
@@ -108,7 +294,6 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
                 >
                   <ScanBarcode className="mb-2 h-7 w-7 text-emerald-600" />
                   <p className="font-semibold text-slate-900">Código de barras</p>
-                  <p className="mt-1 text-xs text-slate-500">Linhas brancas no fundo preto</p>
                 </button>
               </div>
               <Button type="button" variant="ghost" className="w-full" onClick={onClose}>
@@ -117,67 +302,52 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
             </>
           ) : (
             <>
-              <p className="text-sm text-slate-600">
-                {kind === 'qr'
-                  ? 'Aproxime só do QR (quadrado). Evite reflexo e tire a foto com foco.'
-                  : 'Enquadre só as barras da parte de baixo da etiqueta. O fundo é preto e as barras são brancas.'}
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-slate-600">Aponte a câmera para o código.</p>
+                <button
+                  type="button"
+                  className="shrink-0 text-xs font-medium text-emerald-700 underline"
+                  onClick={() => {
+                    setKind(null)
+                    setError(null)
+                  }}
+                >
+                  Trocar tipo
+                </button>
+              </div>
 
-              <button
-                type="button"
-                className="text-xs font-medium text-emerald-700 underline"
-                onClick={() => {
-                  setKind(null)
-                  setError(null)
-                }}
-                disabled={decoding}
-              >
-                ← Trocar tipo de código
-              </button>
+              <div className="relative aspect-[3/4] max-h-[55vh] overflow-hidden rounded-xl bg-slate-950 sm:aspect-video sm:max-h-[420px]">
+                <video
+                  ref={videoRef}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  muted
+                  playsInline
+                  autoPlay
+                />
+                <canvas ref={canvasRef} className="hidden" aria-hidden />
+
+                {!starting && !error && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+                    <div
+                      className={`rounded-xl border-2 border-emerald-400/90 shadow-[0_0_0_9999px_rgba(2,6,23,0.35)] ${
+                        kind === 'qr' ? 'h-[42%] w-[42%]' : 'h-[28%] w-[90%]'
+                      }`}
+                    />
+                  </div>
+                )}
+
+                {starting && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/75 text-sm text-white">
+                    Abrindo câmera…
+                  </div>
+                )}
+              </div>
 
               {error && <p className="text-sm text-rose-600">{error}</p>}
-              {decoding && <p className="text-sm text-slate-500">Analisando imagem…</p>}
 
-              <input
-                ref={cameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
-              />
-              <input
-                ref={galleryInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => void decodeFile(e.target.files?.[0] ?? null)}
-              />
-
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="button"
-                  className="w-full py-3.5"
-                  disabled={decoding}
-                  onClick={() => cameraInputRef.current?.click()}
-                >
-                  <Camera className="h-4 w-4" />
-                  Fotografar
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="w-full py-3.5"
-                  disabled={decoding}
-                  onClick={() => galleryInputRef.current?.click()}
-                >
-                  <ImagePlus className="h-4 w-4" />
-                  Galeria
-                </Button>
-                <Button type="button" variant="ghost" className="w-full" disabled={decoding} onClick={onClose}>
-                  Cancelar / digitar manualmente
-                </Button>
-              </div>
+              <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
+                Cancelar / digitar manualmente
+              </Button>
             </>
           )}
         </div>
