@@ -250,14 +250,15 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-3 sm:p-4">
       <div
-        className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+        className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         style={{
-          paddingBottom: 'max(1rem, calc(env(safe-area-inset-bottom, 0px) + 4.5rem))',
+          marginBottom: 'max(0px, calc(env(safe-area-inset-bottom, 0px) + 2.5rem))',
+          maxHeight: 'min(90dvh, 720px)',
         }}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2 text-slate-900">
             <Camera className="h-5 w-5 text-emerald-600" />
             <h3 className="font-semibold">
@@ -274,7 +275,7 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
           </button>
         </div>
 
-        <div className="space-y-3 px-4 pt-4">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
           {!kind ? (
             <>
               <p className="text-sm text-slate-600">Escolha o tipo de código da etiqueta.</p>
@@ -316,10 +317,10 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
                 </button>
               </div>
 
-              <div className="relative aspect-[3/4] max-h-[55vh] overflow-hidden rounded-xl bg-slate-950 sm:aspect-video sm:max-h-[420px]">
+              <div className="relative mx-auto aspect-square w-full max-w-sm overflow-hidden rounded-xl bg-slate-950">
                 <video
                   ref={videoRef}
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className="absolute inset-0 h-full w-full object-cover object-center"
                   muted
                   playsInline
                   autoPlay
@@ -330,7 +331,7 @@ export function BarcodeScanner({ open, onClose, onScan }: BarcodeScannerProps) {
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
                     <div
                       className={`rounded-xl border-2 border-emerald-400/90 shadow-[0_0_0_9999px_rgba(2,6,23,0.35)] ${
-                        kind === 'qr' ? 'h-[42%] w-[42%]' : 'h-[28%] w-[90%]'
+                        kind === 'qr' ? 'h-[46%] w-[46%]' : 'h-[30%] w-[88%]'
                       }`}
                     />
                   </div>
