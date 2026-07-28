@@ -62,6 +62,7 @@ const FIELD_LABELS: Record<string, string> = {
   available_to: 'Horário final',
   owner: 'Proprietário',
   rfid: 'RFID',
+  terms: 'Termos e política',
 }
 
 function formatMissingFields(keys: string[]): string {
@@ -82,6 +83,7 @@ export function RegistrationPage() {
   const [cepLoading, setCepLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const lastResolvedCep = useRef('')
   const resolvingCep = useRef(false)
@@ -190,6 +192,9 @@ export function RegistrationPage() {
       const valid = rfidCodes.map((c) => c.trim()).filter(Boolean)
       if (!valid.length) errors.rfid = 'Informe ao menos um código RFID'
     }
+    if (!acceptedTerms) {
+      errors.terms = 'Aceite os Termos de Uso e a Política de Privacidade'
+    }
 
     setFieldErrors(errors)
     return errors
@@ -270,6 +275,7 @@ export function RegistrationPage() {
       setOwner(null)
       setAllowedUsers([])
       setFieldErrors({})
+      setAcceptedTerms(false)
       setFormKey((k) => k + 1)
       window.setTimeout(() => {
         window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -588,6 +594,50 @@ export function RegistrationPage() {
           />
         </Field>
       </Section>
+
+      <div className="space-y-2 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur sm:p-5">
+        <label className="flex cursor-pointer items-start gap-3">
+          <input
+            type="checkbox"
+            checked={acceptedTerms}
+            onChange={(e) => {
+              setAcceptedTerms(e.target.checked)
+              if (e.target.checked) {
+                setFieldErrors((prev) => {
+                  const next = { ...prev }
+                  delete next.terms
+                  return next
+                })
+              }
+            }}
+            className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-emerald-600 accent-emerald-600 focus:ring-emerald-500"
+          />
+          <span className="text-sm leading-relaxed text-slate-700">
+            Li e concordo com os{' '}
+            <a
+              href="https://license.intelbras-cve-pro.com.br/termos-de-uso"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-emerald-700 underline underline-offset-2 hover:text-emerald-800"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Termos de Uso
+            </a>{' '}
+            e a{' '}
+            <a
+              href="https://www.intelbras.com/pt-br/politica-de-privacidade/politica"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-emerald-700 underline underline-offset-2 hover:text-emerald-800"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Política de Privacidade
+            </a>
+            .
+          </span>
+        </label>
+        {fieldErrors.terms && <p className="pl-7 text-xs text-rose-600">{fieldErrors.terms}</p>}
+      </div>
 
       <div className="sticky bottom-3 z-30">
         <Button type="submit" className="w-full py-3.5 text-base shadow-lg shadow-emerald-600/25" disabled={submitting}>
