@@ -61,6 +61,7 @@ const FIELD_LABELS: Record<string, string> = {
   available_from: 'Horário inicial',
   available_to: 'Horário final',
   owner: 'Proprietário',
+  allowed: 'Acesso permitido',
   rfid: 'RFID',
   terms: 'Termos e política',
 }
@@ -187,6 +188,17 @@ export function RegistrationPage() {
     }
     if (form.visibility === 'private' && !owner) {
       errors.owner = 'Busque o CPF do proprietário'
+    }
+    if (form.visibility === 'private' && owner) {
+      const ownerCpf = onlyDigits(owner.doc_number)
+      const duplicated = allowedUsers.some(
+        (user) =>
+          user.user_pk === owner.user_pk || onlyDigits(user.doc_number) === ownerCpf,
+      )
+      if (duplicated) {
+        errors.allowed =
+          'O proprietário não pode ser adicionado também em acesso permitido'
+      }
     }
     if (form.wants_rfid_tag) {
       const valid = rfidCodes.map((c) => c.trim()).filter(Boolean)
@@ -481,19 +493,22 @@ export function RegistrationPage() {
         {form.visibility === 'private' && (
           <div className="mt-4 space-y-3">
             {fieldErrors.owner && <p className="text-xs text-rose-600">{fieldErrors.owner}</p>}
+            {fieldErrors.allowed && <p className="text-xs text-rose-600">{fieldErrors.allowed}</p>}
             <CpfUserLookup
               label="Proprietário"
               description="Informe o CPF do proprietário da estação."
               selected={owner}
               onSelect={setOwner}
-              excludeUserPks={allowedUsers.map((u) => u.user_pk)}
+              excludeUsers={allowedUsers}
+              excludeMessage="Este CPF já está na lista de acesso permitido"
             />
             <CpfUserMultiLookup
               label="Acesso permitido"
               description="Adicione um ou mais usuários com acesso à estação."
               selected={allowedUsers}
               onChange={setAllowedUsers}
-              excludeUserPks={owner ? [owner.user_pk] : []}
+              excludeUsers={owner ? [owner] : []}
+              excludeMessage="Este CPF já é o proprietário e não pode ser adicionado na permissão"
             />
           </div>
         )}

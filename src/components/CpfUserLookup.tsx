@@ -35,10 +35,19 @@ function UserCard({
   )
 }
 
+function isSameUser(a: UserPrivateStation, b: { user_pk?: number; doc_number?: string }) {
+  if (b.user_pk != null && a.user_pk === b.user_pk) return true
+  if (b.doc_number) {
+    return onlyDigits(a.doc_number) === onlyDigits(b.doc_number)
+  }
+  return false
+}
+
 interface CpfLookupBaseProps {
   label: string
   description?: string
-  excludeUserPks?: number[]
+  excludeUsers?: UserPrivateStation[]
+  excludeMessage?: string
 }
 
 export function CpfUserLookup({
@@ -46,7 +55,8 @@ export function CpfUserLookup({
   description,
   selected,
   onSelect,
-  excludeUserPks = [],
+  excludeUsers = [],
+  excludeMessage = 'Este CPF já está na lista de acesso permitido',
 }: CpfLookupBaseProps & {
   selected: UserPrivateStation | null
   onSelect: (user: UserPrivateStation | null) => void
@@ -58,7 +68,7 @@ export function CpfUserLookup({
   const lookup = async () => {
     const digits = onlyDigits(cpf)
     if (digits.length !== 11) {
-      toast.fail()
+      toast.fail('Informe um CPF válido')
       return
     }
 
@@ -67,15 +77,15 @@ export function CpfUserLookup({
       const result = await getUserByCpf(digits)
       const user = result.userPrivateStation
 
-      if (excludeUserPks.includes(user.user_pk)) {
-        toast.fail()
+      if (excludeUsers.some((excluded) => isSameUser(excluded, user))) {
+        toast.fail(excludeMessage)
         return
       }
 
       onSelect(user)
       setCpf('')
     } catch {
-      toast.fail()
+      toast.fail('CPF não encontrado')
     } finally {
       setLoading(false)
     }
@@ -129,7 +139,8 @@ export function CpfUserMultiLookup({
   description,
   selected,
   onChange,
-  excludeUserPks = [],
+  excludeUsers = [],
+  excludeMessage = 'Este CPF já é o proprietário e não pode ser adicionado na permissão',
 }: CpfLookupBaseProps & {
   selected: UserPrivateStation[]
   onChange: (users: UserPrivateStation[]) => void
@@ -141,7 +152,7 @@ export function CpfUserMultiLookup({
   const lookup = async () => {
     const digits = onlyDigits(cpf)
     if (digits.length !== 11) {
-      toast.fail()
+      toast.fail('Informe um CPF válido')
       return
     }
 
@@ -150,15 +161,20 @@ export function CpfUserMultiLookup({
       const result = await getUserByCpf(digits)
       const user = result.userPrivateStation
 
-      if (excludeUserPks.includes(user.user_pk) || selected.some((u) => u.user_pk === user.user_pk)) {
-        toast.fail()
+      if (excludeUsers.some((excluded) => isSameUser(excluded, user))) {
+        toast.fail(excludeMessage)
+        return
+      }
+
+      if (selected.some((u) => isSameUser(u, user))) {
+        toast.fail('Este CPF já foi adicionado na lista de permissão')
         return
       }
 
       onChange([...selected, user])
       setCpf('')
     } catch {
-      toast.fail()
+      toast.fail('CPF não encontrado')
     } finally {
       setLoading(false)
     }
