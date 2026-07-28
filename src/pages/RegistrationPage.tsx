@@ -43,6 +43,34 @@ function getLicenseCode(): string {
   return getAppConfig().licenseCode
 }
 
+const FIELD_LABELS: Record<string, string> = {
+  first_name: 'Nome',
+  last_name: 'Sobrenome',
+  email: 'E-mail',
+  area_code: 'DDD',
+  phone: 'Telefone',
+  address: 'Rua',
+  house_number: 'Número',
+  city: 'Cidade',
+  state: 'Estado',
+  zip_code: 'CEP',
+  serial_number: 'Número de série',
+  charger_model: 'Modelo',
+  license: 'Licença',
+  coords: 'Localização no mapa',
+  available_from: 'Horário inicial',
+  available_to: 'Horário final',
+  owner: 'Proprietário',
+  rfid: 'RFID',
+}
+
+function formatMissingFields(keys: string[]): string {
+  const labels = keys.map((key) => FIELD_LABELS[key] ?? key)
+  if (labels.length === 1) return labels[0]
+  if (labels.length === 2) return `${labels[0]} e ${labels[1]}`
+  return `${labels.slice(0, -1).join(', ')} e ${labels[labels.length - 1]}`
+}
+
 export function RegistrationPage() {
   const toast = useToast()
   const [form, setForm] = useState(initialForm)
@@ -130,28 +158,28 @@ export function RegistrationPage() {
     }
   }, [form.zip_code, toast])
 
-  const validate = (): boolean => {
+  const validate = (): Record<string, string> => {
     const errors: Record<string, string> = {}
 
-    if (!form.first_name.trim()) errors.first_name = 'Obrigatório'
-    if (!form.last_name.trim()) errors.last_name = 'Obrigatório'
-    if (!form.email.trim()) errors.email = 'Obrigatório'
-    if (onlyDigits(form.area_code).length < 2) errors.area_code = 'DDD inválido'
-    if (onlyDigits(form.phone).length < 8) errors.phone = 'Telefone inválido'
+    if (!form.first_name.trim()) errors.first_name = 'Informe o nome'
+    if (!form.last_name.trim()) errors.last_name = 'Informe o sobrenome'
+    if (!form.email.trim()) errors.email = 'Informe o e-mail'
+    if (onlyDigits(form.area_code).length < 2) errors.area_code = 'Informe um DDD válido'
+    if (onlyDigits(form.phone).length < 8) errors.phone = 'Informe um telefone válido'
     if (!form.address.trim()) errors.address = 'Informe a rua'
     if (!form.house_number.trim()) errors.house_number = 'Informe o número'
-    if (!form.city.trim()) errors.city = 'Obrigatório'
-    if (!form.state) errors.state = 'Obrigatório'
-    if (onlyDigits(form.zip_code).length !== 8) errors.zip_code = 'CEP inválido'
-    if (!form.serial_number.trim()) errors.serial_number = 'Obrigatório'
-    if (!form.charger_model.trim()) errors.charger_model = 'Obrigatório'
+    if (!form.city.trim()) errors.city = 'Informe a cidade'
+    if (!form.state) errors.state = 'Informe o estado'
+    if (onlyDigits(form.zip_code).length !== 8) errors.zip_code = 'Informe um CEP válido'
+    if (!form.serial_number.trim()) errors.serial_number = 'Informe o número de série'
+    if (!form.charger_model.trim()) errors.charger_model = 'Selecione o modelo'
     if (!getLicenseCode()) errors.license = 'Licença não configurada'
     if (form.latitude == null || form.longitude == null) {
       errors.coords = 'Busque o CEP e ajuste o pin no mapa'
     }
     if (!form.available_24h) {
-      if (!normalizeTime(form.available_from)) errors.available_from = 'Informe o horário'
-      if (!normalizeTime(form.available_to)) errors.available_to = 'Informe o horário'
+      if (!normalizeTime(form.available_from)) errors.available_from = 'Informe o horário inicial'
+      if (!normalizeTime(form.available_to)) errors.available_to = 'Informe o horário final'
     }
     if (form.visibility === 'private' && !owner) {
       errors.owner = 'Busque o CPF do proprietário'
@@ -162,7 +190,7 @@ export function RegistrationPage() {
     }
 
     setFieldErrors(errors)
-    return Object.keys(errors).length === 0
+    return errors
   }
 
   const buildPayload = (): RegistrationPayload => {
@@ -217,8 +245,14 @@ export function RegistrationPage() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
-    if (!validate()) {
-      toast.fail()
+    const errors = validate()
+    const missing = Object.values(errors)
+    if (missing.length) {
+      toast.fail(
+        missing.length === 1
+          ? missing[0]
+          : `Preencha os dados obrigatórios: ${formatMissingFields(Object.keys(errors))}`,
+      )
       return
     }
 
@@ -240,7 +274,9 @@ export function RegistrationPage() {
           /* ignore */
         }
       }
-      toast.fail()
+      const apiMessage =
+        err instanceof ApiError ? err.body.error || err.body.message || err.message : null
+      toast.fail(apiMessage || undefined)
     } finally {
       setSubmitting(false)
     }

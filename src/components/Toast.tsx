@@ -13,7 +13,7 @@ interface Toast {
 interface ToastContextValue {
   notify: (variant: ToastVariant, message: string) => void
   success: (message?: string) => void
-  fail: () => void
+  fail: (message?: string) => void
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null)
@@ -40,7 +40,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     () => ({
       notify,
       success: (message = 'Cadastrado com sucesso') => notify('success', message),
-      fail: () => notify('error', 'Falha. Tente novamente mais tarde.'),
+      fail: (message = 'Falha. Tente novamente mais tarde.') => notify('error', message),
     }),
     [notify],
   )
